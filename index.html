@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Khata Bahi — Ledger &amp; Home Expenses</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#294A3F">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bahi-Khata">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@400;500;600&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper: #E4E7DE;
+    --paper-card: #F3F4EC;
+    --paper-shadow: #C7CDB9;
+    --rule: #BEC5AC;
+    --rule-strong: #7C8A6E;
+    --ink: #23281D;
+    --ink-soft: #626B55;
+    --brass: #3E6B5C;
+    --brass-dark: #294A3F;
+    --credit: #2E6B6B;
+    --credit-bg: #DDEAE8;
+    --debit: #7A2E3B;
+    --debit-bg: #F1DEE1;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: var(--paper);
+    background-image:
+      repeating-linear-gradient(transparent, transparent 34px, rgba(124,138,110,0.18) 34px, rgba(124,138,110,0.18) 35px);
+    font-family: 'Karla', sans-serif;
+    color: var(--ink);
+    min-height: 100vh;
+    padding-bottom: 84px;
+  }
+  .binding{
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    width: 22px;
+    background: linear-gradient(90deg, var(--brass-dark), var(--brass));
+    z-index: 5;
+  }
+  .binding-hole{
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--paper);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+    position: absolute; left: 6.5px;
+  }
+  .wrap{ padding-left: 30px; padding-right: 14px; max-width: 560px; margin: 0 auto; }
+  header{
+    padding: 22px 4px 14px 4px;
+  }
+  header h1{
+    font-family: 'Lora', serif;
+    font-weight: 700;
+    font-size: 26px;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+  header .sub{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 3px;
+    font-style: italic;
+    font-family: 'Lora', serif;
+  }
+  .stat-row{
+    display: flex; gap: 10px; margin-top: 16px;
+  }
+  .stat{
+    flex: 1;
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 10px 12px;
+    box-shadow: 0 2px 0 var(--paper-shadow);
+  }
+  .stat .label{ font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); font-weight: 600;}
+  .stat .value{ font-family: 'IBM Plex Mono', monospace; font-size: 19px; font-weight: 600; margin-top: 4px;}
+  .stat.get .value{ color: var(--credit); }
+  .stat.pay .value{ color: var(--debit); }
+
+  .tabbar{
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--paper-card);
+    border-top: 1px solid var(--rule-strong);
+    display: flex;
+    z-index: 10;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .tabbar button{
+    flex: 1;
+    background: none; border: none;
+    padding: 12px 4px 10px 4px;
+    font-family: 'Karla', sans-serif;
+    font-size: 12px; font-weight: 600;
+    color: var(--ink-soft);
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .tabbar button .ic{ font-size: 18px; }
+  .tabbar button.active{ color: var(--brass-dark); }
+  .tabbar button.active .ic{ transform: translateY(-1px); }
+  .tabbar button:after{
+    content:''; display:block; width: 26px; height: 2px; margin-top:2px; border-radius: 2px;
+    background: transparent;
+  }
+  .tabbar button.active:after{ background: var(--brass); }
+
+  .section-title{
+    font-family: 'Lora', serif;
+    font-weight: 700;
+    font-size: 15px;
+    margin: 22px 0 10px 0;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .section-title .add-btn{
+    font-family:'Karla',sans-serif;
+    font-size: 12px; font-weight: 700;
+    color: var(--brass-dark);
+    background: var(--paper-card);
+    border: 1px solid var(--rule-strong);
+    border-radius: 20px;
+    padding: 5px 12px;
+  }
+
+  .party-row{
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule-strong);
+    border-radius: 3px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .party-row .name{ font-weight: 600; font-size: 14.5px; }
+  .party-row .meta{ font-size: 11px; color: var(--ink-soft); margin-top: 2px;}
+  .party-row .amt{ font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 15px; text-align:right; }
+  .party-row .amt.get{ color: var(--credit); }
+  .party-row .amt.pay{ color: var(--debit); }
+  .party-row .amt .tag{ display:block; font-size: 9.5px; font-family:'Karla',sans-serif; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; opacity:0.75;}
+
+  .empty{
+    text-align:center; padding: 34px 14px; color: var(--ink-soft);
+    font-family:'Lora',serif; font-style: italic; font-size: 14px;
+    border: 1px dashed var(--rule-strong); border-radius: 4px;
+  }
+
+  .entry-row{
+    display:flex; justify-content: space-between; align-items:flex-start;
+    padding: 10px 0; border-bottom: 1px solid var(--rule);
+    gap: 10px;
+  }
+  .entry-row:last-child{ border-bottom: none; }
+  .entry-row .note{ font-size: 13.5px; font-weight: 500; }
+  .entry-row .date{ font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .entry-row .right{ text-align: right; flex-shrink:0; }
+  .entry-row .amt{ font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14.5px; }
+  .entry-row .amt.gave{ color: var(--debit); }
+  .entry-row .amt.got{ color: var(--credit); }
+  .entry-row .bal{ font-family:'IBM Plex Mono',monospace; font-size: 10.5px; color: var(--ink-soft); margin-top:2px;}
+
+  .detail-header{
+    display:flex; align-items:center; gap: 10px; padding: 16px 0 6px 0;
+  }
+  .back-btn{
+    background: var(--paper-card); border: 1px solid var(--rule-strong);
+    border-radius: 50%; width: 34px; height:34px; font-size: 16px; color: var(--brass-dark); font-weight:700;
+    flex-shrink:0;
+  }
+  .detail-header h2{ font-family:'Lora',serif; font-size: 19px; margin:0; }
+  .detail-balance{
+    background: var(--paper-card); border:1px solid var(--rule); border-radius: 4px;
+    padding: 14px; margin: 10px 0 18px 0; text-align:center;
+    box-shadow: 0 2px 0 var(--paper-shadow);
+  }
+  .detail-balance .label{ font-size: 11px; text-transform:uppercase; letter-spacing:0.06em; color: var(--ink-soft); font-weight:700;}
+  .detail-balance .value{ font-family:'IBM Plex Mono',monospace; font-size: 26px; font-weight:700; margin-top:4px;}
+  .detail-balance .value.get{ color: var(--credit);}
+  .detail-balance .value.pay{ color: var(--debit);}
+
+  .quick-actions{ display:flex; gap:10px; margin-bottom: 18px;}
+  .quick-actions button{
+    flex:1; padding: 11px; border-radius: 4px; font-weight: 700; font-size: 13.5px; border: 1px solid;
+    font-family:'Karla',sans-serif;
+  }
+  .quick-actions .gave-btn{ background: var(--debit-bg); color: var(--debit); border-color: var(--debit); }
+  .quick-actions .got-btn{ background: var(--credit-bg); color: var(--credit); border-color: var(--credit); }
+
+  .modal-overlay{
+    position: fixed; inset:0; background: rgba(43,36,22,0.45); z-index: 50;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .modal{
+    background: var(--paper-card); width:100%; max-width: 560px;
+    border-radius: 14px 14px 0 0; padding: 20px 20px calc(20px + env(safe-area-inset-bottom,0)) 20px;
+    border-top: 3px solid var(--brass);
+  }
+  .modal h3{ font-family:'Lora',serif; margin: 0 0 14px 0; font-size: 18px;}
+  .field{ margin-bottom: 12px; }
+  .field label{ display:block; font-size: 11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color: var(--ink-soft); margin-bottom: 5px;}
+  .field input, .field select, .field textarea{
+    width: 100%; padding: 10px 11px; border-radius: 5px; border: 1px solid var(--rule-strong);
+    background: var(--paper); font-family:'Karla',sans-serif; font-size: 15px; color: var(--ink);
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{ outline: 2px solid var(--brass); outline-offset: 1px; }
+  .modal-btns{ display:flex; gap:10px; margin-top: 16px;}
+  .modal-btns button{ flex:1; padding: 12px; border-radius:5px; font-weight:700; font-size:14px; font-family:'Karla',sans-serif; border:1px solid var(--rule-strong);}
+  .btn-primary{ background: var(--brass); color: #fff; border-color: var(--brass-dark) !important; }
+  .btn-secondary{ background: transparent; color: var(--ink-soft); }
+
+  .cat-bar-row{ margin-bottom: 10px; }
+  .cat-bar-row .top{ display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px;}
+  .cat-bar-row .top .catname{ font-weight:600; }
+  .cat-bar-row .top .catamt{ font-family:'IBM Plex Mono',monospace; color: var(--ink-soft); }
+  .cat-bar-track{ height:7px; background: var(--rule); border-radius: 4px; overflow:hidden; }
+  .cat-bar-fill{ height:100%; background: var(--brass); border-radius:4px; }
+
+  .month-nav{ display:flex; align-items:center; justify-content:space-between; margin: 18px 0 6px 0;}
+  .month-nav button{ background:var(--paper-card); border:1px solid var(--rule-strong); border-radius:50%; width:30px; height:30px; color:var(--brass-dark); font-weight:700;}
+  .month-nav .mlabel{ font-family:'Lora',serif; font-weight:700; font-size:15px;}
+
+  .expense-row{
+    background: var(--paper-card); border:1px solid var(--rule); border-left: 3px solid var(--brass);
+    border-radius:3px; padding: 11px 13px; margin-bottom:7px; display:flex; justify-content:space-between; align-items:center;
+  }
+  .expense-row .cat{ font-weight:600; font-size:14px; }
+  .expense-row .note{ font-size:11.5px; color: var(--ink-soft); margin-top:1px;}
+  .expense-row .amt{ font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14.5px; color: var(--debit);}
+  .expense-row .date{ font-size:10px; color: var(--ink-soft); text-align:right; margin-top:2px;}
+
+  .toast{
+    position:fixed; bottom: 90px; left:50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--paper-card); padding: 9px 16px; border-radius: 20px;
+    font-size: 13px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    opacity:0; pointer-events:none; transition: opacity 0.25s ease;
+  }
+  .toast.show{ opacity: 1; }
+  .del-x{ background:none; border:none; color: var(--ink-soft); font-size: 16px; padding: 2px 6px; }
+  .settings-fab{
+    position: fixed; top: 16px; right: 14px; z-index: 20;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--paper-card); border: 1px solid var(--rule-strong);
+    color: var(--brass-dark); font-size: 16px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.12);
+  }
+  .currency-option{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 11px 4px; border-bottom: 1px solid var(--rule); cursor: pointer;
+  }
+  .currency-option:last-child{ border-bottom: none; }
+  .currency-option .sym{ font-family:'IBM Plex Mono',monospace; font-weight:600; width: 46px; color: var(--brass-dark); }
+  .currency-option .cname{ flex:1; font-size: 13.5px; }
+  .currency-option .check{ color: var(--credit); font-weight:700; visibility:hidden; }
+  .currency-option.selected .check{ visibility: visible; }
+</style>
+</head>
+<body>
+<div class="binding" id="binding"></div>
+<button class="settings-fab" id="settingsFab" title="Currency &amp; settings">⚙</button>
+<div class="wrap" id="app"></div>
+<div class="tabbar" id="tabbar">
+  <button data-tab="home" class="active"><span class="ic">⌂</span>Home</button>
+  <button data-tab="khata"><span class="ic">✎</span>Khata</button>
+  <button data-tab="kharch"><span class="ic">$</span>Kharch</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const CATEGORIES = ["Groceries","Rent","Utilities","Transport","Medical","Education","Entertainment","Household","Other"];
+const CURRENCIES = [
+  {code:'INR', symbol:'₹', name:'Indian Rupee'},
+  {code:'USD', symbol:'$', name:'US Dollar'},
+  {code:'EUR', symbol:'€', name:'Euro'},
+  {code:'GBP', symbol:'£', name:'British Pound'},
+  {code:'PKR', symbol:'₨', name:'Pakistani Rupee'},
+  {code:'BDT', symbol:'৳', name:'Bangladeshi Taka'},
+  {code:'NPR', symbol:'रु', name:'Nepali Rupee'},
+  {code:'AED', symbol:'AED', name:'UAE Dirham'},
+  {code:'SAR', symbol:'SAR', name:'Saudi Riyal'},
+  {code:'JPY', symbol:'¥', name:'Japanese Yen'},
+  {code:'AUD', symbol:'A$', name:'Australian Dollar'},
+  {code:'CAD', symbol:'C$', name:'Canadian Dollar'},
+  {code:'SGD', symbol:'S$', name:'Singapore Dollar'},
+];
+
+let state = {
+  tab: 'home',
+  currency: 'INR',
+  parties: [],
+  entries: {},       // partyId -> [{id,type:'gave'|'got',amount,note,date}]
+  expenses: [],       // [{id,amount,category,note,date}]
+  activePartyId: null,
+  monthOffset: 0,
+  loading: true
+};
+
+const appEl = document.getElementById('app');
+const toastEl = document.getElementById('toast');
+
+function showToast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  setTimeout(()=> toastEl.classList.remove('show'), 1800);
+}
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+function curSymbol(){
+  const c = CURRENCIES.find(c=>c.code===state.currency);
+  return c ? c.symbol : '₹';
+}
+
+function fmt(n){
+  const num = Number(n)||0;
+  const locale = state.currency === 'INR' || state.currency === 'NPR' ? 'en-IN' : 'en-US';
+  const sep = /[A-Za-z]$/.test(curSymbol()) ? ' ' : '';
+  return curSymbol() + sep + num.toLocaleString(locale, {maximumFractionDigits:0});
+}
+
+function fmtDate(d){
+  const dt = new Date(d);
+  return dt.toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
+}
+
+const storage = {
+  async get(key){
+    try{
+      const raw = localStorage.getItem(key);
+      if(raw === null) return null;
+      return {key, value: raw};
+    }catch(e){ return null; }
+  },
+  async set(key, value){
+    try{
+      localStorage.setItem(key, value);
+      return {key, value};
+    }catch(e){ return null; }
+  }
+};
+
+async function loadData(){
+  try{
+    const khata = await storage.get('khata-store');
+    if(khata && khata.value){
+      const parsed = JSON.parse(khata.value);
+      state.parties = parsed.parties || [];
+      state.entries = parsed.entries || {};
+    }
+  }catch(e){ /* no data yet */ }
+  try{
+    const exp = await storage.get('expenses-store');
+    if(exp && exp.value){
+      const parsed = JSON.parse(exp.value);
+      state.expenses = parsed.expenses || [];
+    }
+  }catch(e){ /* no data yet */ }
+  try{
+    const settings = await storage.get('settings-store');
+    if(settings && settings.value){
+      const parsed = JSON.parse(settings.value);
+      if(parsed.currency) state.currency = parsed.currency;
+    }
+  }catch(e){ /* no data yet */ }
+  state.loading = false;
+  render();
+}
+
+async function saveSettings(){
+  try{
+    await storage.set('settings-store', JSON.stringify({currency: state.currency}));
+  }catch(e){ showToast('Could not save — try again'); }
+}
+
+async function saveKhata(){
+  try{
+    await storage.set('khata-store', JSON.stringify({parties: state.parties, entries: state.entries}));
+  }catch(e){ showToast('Could not save — try again'); }
+}
+async function saveExpenses(){
+  try{
+    await storage.set('expenses-store', JSON.stringify({expenses: state.expenses}));
+  }catch(e){ showToast('Could not save — try again'); }
+}
+
+function partyBalance(partyId){
+  const list = state.entries[partyId] || [];
+  return list.reduce((sum,e)=> sum + (e.type==='gave' ? e.amount : -e.amount), 0);
+}
+
+function totalReceivable(){
+  return state.parties.reduce((s,p)=>{
+    const b = partyBalance(p.id);
+    return s + (b>0? b:0);
+  },0);
+}
+function totalPayable(){
+  return state.parties.reduce((s,p)=>{
+    const b = partyBalance(p.id);
+    return s + (b<0? -b:0);
+  },0);
+}
+
+function currentMonthExpenses(){
+  const now = new Date();
+  now.setMonth(now.getMonth() + state.monthOffset);
+  const y = now.getFullYear(), m = now.getMonth();
+  return state.expenses.filter(e=>{
+    const d = new Date(e.date);
+    return d.getFullYear()===y && d.getMonth()===m;
+  }).sort((a,b)=> new Date(b.date)-new Date(a.date));
+}
+
+function monthLabel(){
+  const now = new Date();
+  now.setMonth(now.getMonth() + state.monthOffset);
+  return now.toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+}
+
+// ---------- RENDER ----------
+function render(){
+  renderBinding();
+  document.querySelectorAll('.tabbar button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.tab === state.tab);
+  });
+
+  if(state.loading){
+    appEl.innerHTML = `<div style="padding:60px 10px;text-align:center;color:var(--ink-soft);font-family:'Lora',serif;font-style:italic;">Opening the ledger…</div>`;
+    return;
+  }
+
+  if(state.tab === 'home') renderHome();
+  else if(state.tab === 'khata') renderKhataList();
+  else if(state.tab === 'khata-detail') renderKhataDetail();
+  else if(state.tab === 'kharch') renderKharch();
+}
+
+function renderBinding(){
+  const el = document.getElementById('binding');
+  if(el.childElementCount) return;
+  let html = '';
+  for(let i=0;i<30;i++){
+    html += `<div class="binding-hole" style="top:${20 + i*30}px"></div>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderHome(){
+  const rec = totalReceivable(), pay = totalPayable();
+  const monthTotal = currentMonthExpenses().reduce((s,e)=>s+e.amount,0);
+  appEl.innerHTML = `
+    <header>
+      <h1>Bahi-Khata</h1>
+      <div class="sub">Your ledger and home accounts, kept the old way</div>
+      <div class="stat-row">
+        <div class="stat get">
+          <div class="label">You'll get</div>
+          <div class="value">${fmt(rec)}</div>
+        </div>
+        <div class="stat pay">
+          <div class="label">You'll pay</div>
+          <div class="value">${fmt(pay)}</div>
+        </div>
+      </div>
+    </header>
+    <div class="section-title">This month's home expenses
+      <span class="add-btn" id="goKharch">Ghar Kharch →</span>
+    </div>
+    <div class="detail-balance" style="margin-top:0;">
+      <div class="label">${monthLabel()}</div>
+      <div class="value pay">${fmt(monthTotal)}</div>
+    </div>
+    <div class="section-title">Recent parties
+      <span class="add-btn" id="goKhata">Khata →</span>
+    </div>
+    ${renderPartyList(true)}
+  `;
+  document.getElementById('goKharch').onclick = ()=>{ state.tab='kharch'; render(); };
+  document.getElementById('goKhata').onclick = ()=>{ state.tab='khata'; render(); };
+  bindPartyClicks();
+}
+
+function renderPartyList(limitFive){
+  let list = [...state.parties];
+  if(limitFive) list = list.slice(0,5);
+  if(list.length===0){
+    return `<div class="empty">No entries yet.<br>Tap "+ Add" to start a party's khata.</div>`;
+  }
+  return list.map(p=>{
+    const bal = partyBalance(p.id);
+    const cls = bal>=0 ? 'get':'pay';
+    const tag = bal>=0 ? "you'll get":"you'll pay";
+    return `<div class="party-row" data-id="${p.id}">
+      <div>
+        <div class="name">${escapeHtml(p.name)}</div>
+        <div class="meta">${(state.entries[p.id]||[]).length} entr${(state.entries[p.id]||[]).length===1?'y':'ies'}</div>
+      </div>
+      <div class="amt ${cls}"><span class="tag">${tag}</span>${fmt(Math.abs(bal))}</div>
+    </div>`;
+  }).join('');
+}
+
+function bindPartyClicks(){
+  document.querySelectorAll('.party-row').forEach(row=>{
+    row.onclick = ()=>{
+      state.activePartyId = row.dataset.id;
+      state.tab = 'khata-detail';
+      render();
+    };
+  });
+}
+
+function renderKhataList(){
+  appEl.innerHTML = `
+    <div class="section-title" style="margin-top:20px;">All parties
+      <span class="add-btn" id="addParty">+ Add party</span>
+    </div>
+    ${renderPartyList(false)}
+  `;
+  document.getElementById('addParty').onclick = openAddPartyModal;
+  bindPartyClicks();
+}
+
+function openAddPartyModal(){
+  openModal(`
+    <h3>New party</h3>
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="partyName" placeholder="e.g. Sharma Traders" autofocus>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-secondary" id="cancelBtn">Cancel</button>
+      <button class="btn-primary" id="saveBtn">Save</button>
+    </div>
+  `);
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('saveBtn').onclick = async ()=>{
+    const name = document.getElementById('partyName').value.trim();
+    if(!name){ showToast('Enter a name'); return; }
+    const id = uid();
+    state.parties.push({id, name});
+    state.entries[id] = [];
+    closeModal();
+    render();
+    await saveKhata();
+    showToast('Party added');
+  };
+}
+
+function renderKhataDetail(){
+  const party = state.parties.find(p=>p.id===state.activePartyId);
+  if(!party){ state.tab='khata'; render(); return; }
+  const bal = partyBalance(party.id);
+  const cls = bal>=0 ? 'get':'pay';
+  const tag = bal>=0 ? "You'll get":"You'll pay";
+  const entries = [...(state.entries[party.id]||[])].sort((a,b)=> new Date(b.date)-new Date(a.date));
+
+  // running balance display (chronological)
+  const chrono = [...(state.entries[party.id]||[])].sort((a,b)=> new Date(a.date)-new Date(b.date));
+  let running = 0;
+  const balMap = {};
+  chrono.forEach(e=>{
+    running += (e.type==='gave'? e.amount : -e.amount);
+    balMap[e.id] = running;
+  });
+
+  appEl.innerHTML = `
+    <div class="detail-header">
+      <button class="back-btn" id="backBtn">←</button>
+      <h2>${escapeHtml(party.name)}</h2>
+    </div>
+    <div class="detail-balance">
+      <div class="label">${tag}</div>
+      <div class="value ${cls}">${fmt(Math.abs(bal))}</div>
+    </div>
+    <div class="quick-actions">
+      <button class="gave-btn" id="giveBtn">+ You Gave</button>
+      <button class="got-btn" id="gotBtn">+ You Got</button>
+    </div>
+    <div class="section-title">Entries</div>
+    ${entries.length===0 ? `<div class="empty">No entries yet for ${escapeHtml(party.name)}.</div>` :
+      entries.map(e=>`
+        <div class="entry-row">
+          <div>
+            <div class="note">${escapeHtml(e.note || (e.type==='gave'?'You Gave':'You Got'))}</div>
+            <div class="date">${fmtDate(e.date)}</div>
+          </div>
+          <div class="right">
+            <div class="amt ${e.type}">${e.type==='gave'?'+':'−'}${fmt(e.amount)}</div>
+            <div class="bal">bal ${fmt(Math.abs(balMap[e.id]))} ${balMap[e.id]>=0?'Dr':'Cr'}</div>
+          </div>
+        </div>
+      `).join('')
+    }
+    <div style="margin-top:16px;">
+      <button class="del-x" id="deleteParty" style="border:1px solid var(--rule-strong); border-radius:5px; padding:8px 14px; color:var(--debit); font-size:12.5px;">Delete this party</button>
+    </div>
+  `;
+  document.getElementById('backBtn').onclick = ()=>{ state.tab='khata'; render(); };
+  document.getElementById('giveBtn').onclick = ()=> openEntryModal(party.id,'gave');
+  document.getElementById('gotBtn').onclick = ()=> openEntryModal(party.id,'got');
+  document.getElementById('deleteParty').onclick = async ()=>{
+    if(confirm(`Delete ${party.name} and all their entries?`)){
+      state.parties = state.parties.filter(p=>p.id!==party.id);
+      delete state.entries[party.id];
+      state.tab='khata';
+      render();
+      await saveKhata();
+      showToast('Party deleted');
+    }
+  };
+}
+
+function openEntryModal(partyId, type){
+  const label = type==='gave' ? 'You Gave (they owe more)' : 'You Got (they paid)';
+  openModal(`
+    <h3>${label}</h3>
+    <div class="field">
+      <label>Amount (${curSymbol()})</label>
+      <input type="number" id="entryAmt" inputmode="decimal" placeholder="0" autofocus>
+    </div>
+    <div class="field">
+      <label>Note</label>
+      <input type="text" id="entryNote" placeholder="e.g. cash, goods, UPI">
+    </div>
+    <div class="field">
+      <label>Date</label>
+      <input type="date" id="entryDate" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="modal-btns">
+      <button class="btn-secondary" id="cancelBtn">Cancel</button>
+      <button class="btn-primary" id="saveBtn">Save</button>
+    </div>
+  `);
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('saveBtn').onclick = async ()=>{
+    const amt = parseFloat(document.getElementById('entryAmt').value);
+    if(!amt || amt<=0){ showToast('Enter a valid amount'); return; }
+    const note = document.getElementById('entryNote').value.trim();
+    const date = document.getElementById('entryDate').value || new Date().toISOString().slice(0,10);
+    if(!state.entries[partyId]) state.entries[partyId] = [];
+    state.entries[partyId].push({id:uid(), type, amount:amt, note, date});
+    closeModal();
+    render();
+    await saveKhata();
+    showToast('Entry saved');
+  };
+}
+
+function renderKharch(){
+  const list = currentMonthExpenses();
+  const total = list.reduce((s,e)=>s+e.amount,0);
+  const byCat = {};
+  list.forEach(e=>{ byCat[e.category] = (byCat[e.category]||0) + e.amount; });
+  const maxCat = Math.max(1, ...Object.values(byCat));
+
+  appEl.innerHTML = `
+    <div class="section-title" style="margin-top:20px;">Ghar Kharch
+      <span class="add-btn" id="addExpense">+ Add expense</span>
+    </div>
+    <div class="month-nav">
+      <button id="prevMonth">‹</button>
+      <div class="mlabel">${monthLabel()}</div>
+      <button id="nextMonth" ${state.monthOffset>=0?'disabled style="opacity:0.3"':''}>›</button>
+    </div>
+    <div class="detail-balance">
+      <div class="label">Total spent</div>
+      <div class="value pay">${fmt(total)}</div>
+    </div>
+    ${Object.keys(byCat).length ? `
+      <div class="section-title" style="margin-top:16px;">By category</div>
+      ${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`
+        <div class="cat-bar-row">
+          <div class="top"><span class="catname">${cat}</span><span class="catamt">${fmt(amt)}</span></div>
+          <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${(amt/maxCat*100).toFixed(0)}%"></div></div>
+        </div>
+      `).join('')}
+    `:''}
+    <div class="section-title" style="margin-top:18px;">Entries</div>
+    ${list.length===0 ? `<div class="empty">No expenses logged for ${monthLabel()}.</div>` :
+      list.map(e=>`
+        <div class="expense-row" data-id="${e.id}">
+          <div>
+            <div class="cat">${e.category}</div>
+            ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
+          </div>
+          <div>
+            <div class="amt">${fmt(e.amount)}</div>
+            <div class="date">${fmtDate(e.date)}</div>
+          </div>
+        </div>
+      `).join('')
+    }
+  `;
+  document.getElementById('addExpense').onclick = openAddExpenseModal;
+  document.getElementById('prevMonth').onclick = ()=>{ state.monthOffset -= 1; render(); };
+  document.getElementById('nextMonth').onclick = ()=>{ if(state.monthOffset<0){ state.monthOffset += 1; render(); } };
+  document.querySelectorAll('.expense-row').forEach(row=>{
+    row.onclick = ()=> maybeDeleteExpense(row.dataset.id);
+  });
+}
+
+function maybeDeleteExpense(id){
+  const exp = state.expenses.find(e=>e.id===id);
+  if(!exp) return;
+  if(confirm(`Delete "${exp.category}" expense of ${fmt(exp.amount)}?`)){
+    state.expenses = state.expenses.filter(e=>e.id!==id);
+    render();
+    saveExpenses();
+    showToast('Expense deleted');
+  }
+}
+
+function openAddExpenseModal(){
+  openModal(`
+    <h3>Add home expense</h3>
+    <div class="field">
+      <label>Amount (${curSymbol()})</label>
+      <input type="number" id="expAmt" inputmode="decimal" placeholder="0" autofocus>
+    </div>
+    <div class="field">
+      <label>Category</label>
+      <select id="expCat">
+        ${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>Note (optional)</label>
+      <input type="text" id="expNote" placeholder="e.g. weekly vegetables">
+    </div>
+    <div class="field">
+      <label>Date</label>
+      <input type="date" id="expDate" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="modal-btns">
+      <button class="btn-secondary" id="cancelBtn">Cancel</button>
+      <button class="btn-primary" id="saveBtn">Save</button>
+    </div>
+  `);
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('saveBtn').onclick = async ()=>{
+    const amt = parseFloat(document.getElementById('expAmt').value);
+    if(!amt || amt<=0){ showToast('Enter a valid amount'); return; }
+    const category = document.getElementById('expCat').value;
+    const note = document.getElementById('expNote').value.trim();
+    const date = document.getElementById('expDate').value || new Date().toISOString().slice(0,10);
+    state.expenses.push({id:uid(), amount:amt, category, note, date});
+    closeModal();
+    render();
+    await saveExpenses();
+    showToast('Expense saved');
+  };
+}
+
+function openModal(html){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modalOverlay';
+  overlay.innerHTML = `<div class="modal">${html}</div>`;
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeModal(); });
+  document.body.appendChild(overlay);
+}
+function closeModal(){
+  const el = document.getElementById('modalOverlay');
+  if(el) el.remove();
+}
+
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+document.getElementById('settingsFab').addEventListener('click', openSettingsModal);
+
+function openSettingsModal(){
+  openModal(`
+    <h3>Currency</h3>
+    <div id="currencyList">
+      ${CURRENCIES.map(c=>`
+        <div class="currency-option ${c.code===state.currency?'selected':''}" data-code="${c.code}">
+          <span class="sym">${c.symbol}</span>
+          <span class="cname">${c.name}</span>
+          <span class="check">✓</span>
+        </div>
+      `).join('')}
+    </div>
+    <div class="modal-btns">
+      <button class="btn-secondary" id="cancelBtn" style="flex:1;">Close</button>
+    </div>
+  `);
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.querySelectorAll('.currency-option').forEach(opt=>{
+    opt.onclick = async ()=>{
+      state.currency = opt.dataset.code;
+      closeModal();
+      render();
+      await saveSettings();
+      showToast(`Currency set to ${state.currency}`);
+    };
+  });
+}
+
+document.querySelectorAll('.tabbar button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    state.tab = btn.dataset.tab;
+    if(state.tab==='khata') state.activePartyId = null;
+    render();
+  });
+});
+
+loadData();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {
+      // Offline install still works even if this fails on first load
+    });
+  });
+}
+
+</script>
+</body>
+</html>
