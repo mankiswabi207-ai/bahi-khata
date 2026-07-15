@@ -159,6 +159,8 @@
   .toast.show{ opacity: 1; }
 
   .settings-fab{ position: fixed; top: 18px; right: 16px; z-index: 20; width: 40px; height: 40px; border-radius: 50%; background: var(--paper-card); border: 1px solid var(--rule-strong); color: var(--brass); display:flex; align-items:center; justify-content:center; box-shadow: 0 3px 8px rgba(31,41,55,0.1); }
+  .fab{ position: fixed; bottom: 92px; right: 18px; z-index: 15; width: 58px; height: 58px; border-radius: 50%; background: var(--brass); color: #fff; border: none; display:flex; align-items:center; justify-content:center; box-shadow: 0 6px 18px rgba(79,99,210,0.45); }
+  .fab:active{ transform: scale(0.94); }
 
   .currency-option{ display:flex; align-items:center; justify-content:space-between; padding: 13px 4px; border-bottom: 1px solid var(--rule); cursor: pointer; }
   .currency-option:last-child{ border-bottom: none; }
@@ -221,6 +223,7 @@
   <button class="forgot" id="forgotPinBtn">Forgot PIN?</button>
 </div>
 <button class="settings-fab" id="settingsFab" title="Settings"></button>
+<button class="fab" id="mainFab" style="display:none;"></button>
 <div class="wrap" id="app"></div>
 <div class="tabbar" id="tabbar">
   <button data-tab="home" class="active"></button>
@@ -292,6 +295,7 @@ try{
 
 let state = {
   user: null,
+  syncStatus: 'idle',
   tab: 'home',
   currency: 'INR',
   theme: 'light',
@@ -453,6 +457,55 @@ async function loadData(){
     showLockScreen();
   }
   render();
+  maybeShowOnboarding();
+}
+
+async function maybeShowOnboarding(){
+  try{
+    const seen = await storage.get('onboarding-seen');
+    if(seen && seen.value === 'true') return;
+    if(state.parties.length>0 || state.expenses.length>0){
+      await storage.set('onboarding-seen','true');
+      return;
+    }
+    showOnboarding();
+  }catch(e){}
+}
+
+function showOnboarding(){
+  const steps = [
+    { icon:'', emoji:'👋', title:'Welcome to Hisaab', body:'Track money people owe you, and your home expenses — all in one simple app.' },
+    { icon:'book', title:'Keep a Khata', body:'Add anyone you lend to or borrow from. Log what you gave or got, and Hisaab keeps the running balance for you.' },
+    { icon:'cash', title:'Track Home Expenses', body:'Log your daily spending by category, and see monthly and yearly totals at a glance.' }
+  ];
+  let idx = 0;
+  const overlay = document.createElement('div');
+  overlay.id = 'onboardingOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:190;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;';
+  function renderStep(){
+    const s = steps[idx];
+    overlay.innerHTML = `
+      <div style="margin-bottom:18px;color:var(--brass);">${s.emoji ? `<div style="font-size:52px;">${s.emoji}</div>` : icon(s.icon,56)}</div>
+      <h2 style="font-family:'Nunito',sans-serif;font-weight:800;font-size:22px;margin:0 0 10px 0;color:var(--ink);">${s.title}</h2>
+      <p style="font-size:15px;color:var(--ink-soft);font-weight:600;max-width:320px;line-height:1.5;margin:0 0 28px 0;">${s.body}</p>
+      <div style="display:flex;gap:6px;margin-bottom:24px;">
+        ${steps.map((_,i)=>`<div style="width:${i===idx?20:7}px;height:7px;border-radius:4px;background:${i===idx?'var(--brass)':'var(--rule-strong)'};"></div>`).join('')}
+      </div>
+      <button id="obNextBtn" style="background:var(--brass);color:#fff;border:none;padding:14px 36px;border-radius:14px;font-weight:800;font-size:15px;font-family:'Nunito',sans-serif;">${idx===steps.length-1?'Get Started':'Next'}</button>
+      ${idx<steps.length-1?`<button id="obSkipBtn" style="background:none;border:none;color:var(--ink-soft);font-weight:700;font-size:13px;margin-top:14px;">Skip</button>`:''}
+    `;
+    document.getElementById('obNextBtn').onclick = ()=>{
+      if(idx===steps.length-1){ finishOnboarding(); }
+      else { idx++; renderStep(); }
+    };
+    if(document.getElementById('obSkipBtn')) document.getElementById('obSkipBtn').onclick = finishOnboarding;
+  }
+  function finishOnboarding(){
+    overlay.remove();
+    storage.set('onboarding-seen','true');
+  }
+  document.body.appendChild(overlay);
+  renderStep();
 }
 
 async function saveProfiles(){
@@ -505,6 +558,23 @@ async function saveSettings(){
   cloudSaveSettings();
 }
 
+function syncBadgeHtml(){
+  if(!state.user) return '';
+  const map = {
+    syncing: 'Syncing…',
+    synced: '✓ Synced',
+    offline: 'Offline — will sync later',
+    idle: '✓ Synced'
+  };
+  const text = map[state.syncStatus] || map.synced;
+  return `<div class="profile-pill" id="syncBadge" style="margin-left:8px;">${text}</div>`;
+}
+function setSyncStatus(status){
+  state.syncStatus = status;
+  const el = document.getElementById('syncBadge');
+  if(el) el.outerHTML = syncBadgeHtml();
+}
+
 function stripPhotosFromEntries(entriesObj){
   const clean = {};
   for(const pid in entriesObj){
@@ -518,6 +588,7 @@ function stripPhotosFromExpenses(list){
 
 async function cloudSaveLedger(){
   if(!fbReady || !state.user || !state.activeProfileId) return;
+  setSyncStatus('syncing');
   try{
     await db.collection('users').doc(state.user.uid).collection('ledgers').doc(state.activeProfileId).set({
       parties: state.parties,
@@ -525,29 +596,36 @@ async function cloudSaveLedger(){
       expenses: stripPhotosFromExpenses(state.expenses),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-  }catch(e){ /* offline or blocked — local copy is already saved */ }
+    setSyncStatus('synced');
+  }catch(e){ setSyncStatus('offline'); }
 }
 async function cloudSaveProfiles(){
   if(!fbReady || !state.user) return;
+  setSyncStatus('syncing');
   try{
     await db.collection('users').doc(state.user.uid).set({
       activeProfileId: state.activeProfileId,
       profiles: state.profiles,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }, {merge:true});
-  }catch(e){}
+    setSyncStatus('synced');
+  }catch(e){ setSyncStatus('offline'); }
 }
 async function cloudSaveSettings(){
   if(!fbReady || !state.user) return;
+  setSyncStatus('syncing');
   try{
     await db.collection('users').doc(state.user.uid).collection('meta').doc('settings').set({
       currency: state.currency, theme: state.theme, budgets: state.budgets, categories: state.categories
     });
-  }catch(e){}
+    setSyncStatus('synced');
+  }catch(e){ setSyncStatus('offline'); }
 }
 
 async function loadFromCloud(){
   if(!fbReady || !state.user) return;
+  showCloudLoadingOverlay(true);
+  setSyncStatus('syncing');
   try{
     const userDoc = await db.collection('users').doc(state.user.uid).get();
     if(userDoc.exists && userDoc.data().profiles && userDoc.data().profiles.length){
@@ -578,9 +656,31 @@ async function loadFromCloud(){
     } else {
       await cloudSaveLedger();
     }
+    setSyncStatus('synced');
+    showCloudLoadingOverlay(false);
     render();
     showToast('Synced with your account');
-  }catch(e){ showToast('Could not reach the cloud — using data on this device'); }
+  }catch(e){
+    setSyncStatus('offline');
+    showCloudLoadingOverlay(false);
+    render();
+    showToast('Could not reach the cloud — using data on this device');
+  }
+}
+
+function showCloudLoadingOverlay(show){
+  let el = document.getElementById('cloudLoadingOverlay');
+  if(show){
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'cloudLoadingOverlay';
+      el.style.cssText = 'position:fixed;inset:0;z-index:180;background:rgba(20,24,35,0.35);display:flex;align-items:center;justify-content:center;';
+      el.innerHTML = `<div style="background:var(--paper-card);padding:18px 26px;border-radius:16px;font-weight:800;color:var(--ink);box-shadow:0 6px 20px rgba(0,0,0,0.2);">Loading your data…</div>`;
+      document.body.appendChild(el);
+    }
+  } else if(el){
+    el.remove();
+  }
 }
 
 function partyBalance(partyId){
@@ -626,6 +726,7 @@ function render(){
   document.querySelector('[data-tab="home"]').innerHTML = icon('home',20) + '<span>Home</span>';
   document.querySelector('[data-tab="khata"]').innerHTML = icon('book',20) + '<span>Khata</span>';
   document.querySelector('[data-tab="kharch"]').innerHTML = icon('cash',20) + '<span>Expenses</span>';
+  updateFab();
 
   if(state.loading){ appEl.innerHTML = ''; return; }
   if(state.pin && !state.pinUnlocked){ appEl.innerHTML=''; return; }
@@ -636,6 +737,22 @@ function render(){
   else if(state.tab === 'kharch') renderKharch();
 }
 
+function updateFab(){
+  const fab = document.getElementById('mainFab');
+  if(state.loading || (state.pin && !state.pinUnlocked)){ fab.style.display='none'; return; }
+  if(state.tab==='khata'){
+    fab.style.display='flex';
+    fab.innerHTML = icon('plus',26);
+    fab.onclick = openAddPartyModal;
+  } else if(state.tab==='kharch'){
+    fab.style.display='flex';
+    fab.innerHTML = icon('plus',26);
+    fab.onclick = ()=> openAddExpenseModal();
+  } else {
+    fab.style.display='none';
+  }
+}
+
 function renderHome(){
   const rec = totalReceivable(), pay = totalPayable();
   const monthTotal = currentMonthExpenses().reduce((s,e)=>s+e.amount,0);
@@ -644,6 +761,7 @@ function renderHome(){
       <h1>Hisaab</h1>
       <div class="sub">Track what people owe you and your home spending — simply</div>
       ${state.profiles.length>1?`<div class="profile-pill" id="profilePill">${icon('book',12)} ${escapeHtml((state.profiles.find(p=>p.id===state.activeProfileId)||{}).name||'')} · Switch</div>`:''}
+      ${syncBadgeHtml()}
       <div class="stat-row">
         <div class="stat get"><div class="label">You'll get</div><div class="value">${fmt(rec)}</div></div>
         <div class="stat pay"><div class="label">You'll pay</div><div class="value">${fmt(pay)}</div></div>
@@ -687,7 +805,7 @@ function renderPartyList(list){
 
 function bindPartyClicks(){
   document.querySelectorAll('.party-row').forEach(row=>{
-    row.onclick = ()=>{ state.activePartyId = row.dataset.id; state.tab = 'khata-detail'; render(); };
+    row.onclick = ()=>{ state.activePartyId = row.dataset.id; state.tab = 'khata-detail'; pushBackState(); render(); };
   });
 }
 
@@ -695,13 +813,10 @@ function renderKhataList(){
   const q = state.khataSearch.trim().toLowerCase();
   const filtered = q ? state.parties.filter(p=>p.name.toLowerCase().includes(q)) : state.parties;
   appEl.innerHTML = `
-    <div class="section-title" style="margin-top:20px;">All parties
-      <span class="add-btn" id="addParty">${icon('plus',14)} Add party</span>
-    </div>
+    <div class="section-title" style="margin-top:24px;">All parties</div>
     <div class="search-box">${icon('search',16)}<input type="text" id="khataSearchInput" placeholder="Search parties…" value="${escapeHtml(state.khataSearch)}"></div>
     ${renderPartyList(filtered)}
   `;
-  document.getElementById('addParty').onclick = openAddPartyModal;
   document.getElementById('khataSearchInput').oninput = (e)=>{ state.khataSearch = e.target.value; renderKhataList(); };
   document.getElementById('khataSearchInput').focus();
   document.getElementById('khataSearchInput').selectionStart = document.getElementById('khataSearchInput').value.length;
@@ -917,13 +1032,10 @@ function renderKharch(){
     </div>
   `;
   appEl.innerHTML = `
-    <div class="section-title" style="margin-top:20px;">Ghar Kharch
-      <span class="add-btn" id="addExpense">${icon('plus',14)} Add expense</span>
-    </div>
+    <div class="section-title" style="margin-top:24px;">Home Expenses</div>
     ${segControl}
     <div id="kharchBody"></div>
   `;
-  document.getElementById('addExpense').onclick = ()=> openAddExpenseModal();
   document.getElementById('segMonth').onclick = ()=>{ state.kharchView='month'; render(); };
   document.getElementById('segYear').onclick = ()=>{ state.kharchView='year'; render(); };
   if(state.kharchView==='year') renderKharchYearBody();
@@ -1188,8 +1300,13 @@ function openModal(html){
   overlay.innerHTML = `<div class="modal">${html}</div>`;
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeModal(); });
   document.body.appendChild(overlay);
+  pushBackState();
 }
 function closeModal(){ const el = document.getElementById('modalOverlay'); if(el) el.remove(); }
+
+function pushBackState(){
+  history.pushState({navDepth: (history.state && history.state.navDepth || 0) + 1}, '');
+}
 
 // ---------- SETTINGS ----------
 document.getElementById('settingsFab').addEventListener('click', openSettingsModal);
@@ -1197,77 +1314,47 @@ document.getElementById('settingsFab').addEventListener('click', openSettingsMod
 function openSettingsModal(){
   openModal(`
     <h3>${icon('sliders',18)} Settings</h3>
-    <div class="settings-section">
-      <div class="stitle">Account</div>
-      ${state.user ? `
-        <div class="settings-row"><div><div class="stext">${escapeHtml(state.user.email)}</div><div class="shint">Synced to the cloud</div></div></div>
-        <button class="settings-btn danger" id="signOutBtn">${icon('lock',16)} Sign out</button>
-      ` : `
-        <button class="settings-btn" id="signInBtn">${icon('lock',16)} Sign in</button>
-        <button class="settings-btn" id="signUpBtn">${icon('plus',16)} Create account</button>
-        <div class="shint" style="padding:4px 2px 0 2px;">Sign in to sync your ledgers across devices. Works fine without an account too — data just stays on this device.</div>
-      `}
-    </div>
-    <div class="settings-section">
-      <div class="stitle">Ledgers</div>
-      <div id="profileListManage">
-        ${state.profiles.map(p=>`
-          <div class="settings-row">
-            <div class="stext">${p.id===state.activeProfileId?'✓ ':''}${escapeHtml(p.name)}</div>
-            <div style="display:flex;gap:6px;">
-              ${p.id!==state.activeProfileId?`<button class="icon-btn" data-switch-profile="${p.id}" style="width:28px;height:28px;">${icon('book',14)}</button>`:''}
-              <button class="icon-btn" data-rename-profile="${p.id}" style="width:28px;height:28px;">${icon('edit',14)}</button>
-              ${state.profiles.length>1?`<button class="icon-btn" data-del-profile="${p.id}" style="width:28px;height:28px;">${icon('trash',14)}</button>`:''}
-            </div>
-          </div>
-        `).join('')}
-      </div>
-      <button class="settings-btn" id="addProfileBtn">${icon('plus',16)} Add new ledger</button>
-    </div>
-    <div class="settings-section">
-      <div class="stitle">Currency</div>
-      <div id="currencyList">
-        ${CURRENCIES.map(c=>`
-          <div class="currency-option ${c.code===state.currency?'selected':''}" data-code="${c.code}">
-            <span class="sym">${c.symbol}</span><span class="cname">${c.name}</span><span class="check">✓</span>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="stitle">Categories</div>
-      <button class="settings-btn" id="manageCategoriesBtn">${icon('sliders',16)} Manage categories</button>
-    </div>
-    <div class="settings-section">
-      <div class="stitle">Appearance</div>
-      <div class="settings-row">
-        <div><div class="stext">${icon('moon',14)} Dark mode</div></div>
-        <div class="toggle ${state.theme==='dark'?'on':''}" id="darkToggle"><div class="knob"></div></div>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="stitle">Security</div>
-      <div class="settings-row">
-        <div><div class="stext">${icon('lock',14)} PIN lock</div><div class="shint">Basic lock — not encryption-grade</div></div>
-        <div class="toggle ${state.pin?'on':''}" id="pinToggle"><div class="knob"></div></div>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="stitle">Data</div>
-      <button class="settings-btn" id="exportBtn">${icon('download',16)} Export backup (.json, all ledgers)</button>
-      <button class="settings-btn" id="importBtn">${icon('upload',16)} Import backup</button>
-      <button class="settings-btn" id="exportCsvBtn">${icon('download',16)} Export current ledger as CSV</button>
-      <div class="shint" style="padding:4px 2px 0 2px;">Data is stored only on this device/browser. Export a backup before clearing browser data or switching phones.</div>
-    </div>
-    <div class="settings-section">
-      <div class="stitle">About</div>
-      <a class="settings-btn" href="privacy-policy.html" target="_blank" rel="noopener" style="text-decoration:none;">${icon('info',16)} Privacy Policy</a>
-      <a class="settings-btn" href="terms-of-service.html" target="_blank" rel="noopener" style="text-decoration:none;">${icon('info',16)} Terms of Service</a>
-      <div class="shint" style="padding:4px 2px 0 2px;">Hisaab v1.0</div>
-    </div>
+    <button class="settings-btn" id="menuAccount">${icon('lock',16)} Account</button>
+    <button class="settings-btn" id="menuLedgers">${icon('book',16)} Ledgers</button>
+    <button class="settings-btn" id="menuCurrency">${icon('cash',16)} Currency</button>
+    <button class="settings-btn" id="menuCategories">${icon('sliders',16)} Categories</button>
+    <button class="settings-btn" id="menuAppearance">${icon('moon',16)} Appearance &amp; Security</button>
+    <button class="settings-btn" id="menuData">${icon('download',16)} Backup &amp; Data</button>
+    <button class="settings-btn" id="menuAbout">${icon('info',16)} About</button>
     <div class="modal-btns"><button class="btn-secondary" id="closeSettings" style="flex:1;">Close</button></div>
   `);
   document.getElementById('closeSettings').onclick = closeModal;
+  document.getElementById('menuAccount').onclick = ()=>{ closeModal(); openAccountModal(); };
+  document.getElementById('menuLedgers').onclick = ()=>{ closeModal(); openLedgersModal(); };
+  document.getElementById('menuCurrency').onclick = ()=>{ closeModal(); openCurrencyModal(); };
+  document.getElementById('menuCategories').onclick = ()=>{ closeModal(); openManageCategoriesModal(); };
+  document.getElementById('menuAppearance').onclick = ()=>{ closeModal(); openAppearanceModal(); };
+  document.getElementById('menuData').onclick = ()=>{ closeModal(); openDataModal(); };
+  document.getElementById('menuAbout').onclick = ()=>{ closeModal(); openAboutModal(); };
+}
+
+function backRow(){
+  return `<button class="icon-btn" id="backToSettings" style="margin-bottom:14px;">${icon('back',16)}</button>`;
+}
+function bindBack(){
+  document.getElementById('backToSettings').onclick = ()=>{ closeModal(); openSettingsModal(); };
+}
+
+function openAccountModal(){
+  openModal(`
+    ${backRow()}
+    <h3>${icon('lock',18)} Account</h3>
+    ${state.user ? `
+      <div class="settings-row"><div><div class="stext">${escapeHtml(state.user.email)}</div><div class="shint">Synced to the cloud</div></div></div>
+      <button class="settings-btn danger" id="signOutBtn">${icon('lock',16)} Sign out</button>
+    ` : `
+      <button class="settings-btn" id="signInBtn">${icon('lock',16)} Sign in</button>
+      <button class="settings-btn" id="signUpBtn">${icon('plus',16)} Create account</button>
+      <button class="settings-btn" id="googleSignInBtn">${icon('lock',16)} Continue with Google</button>
+      <div class="shint" style="padding:4px 2px 0 2px;">Sign in to sync your ledgers across devices. Works fine without an account too — data just stays on this device.</div>
+    `}
+  `);
+  bindBack();
   if(state.user){
     document.getElementById('signOutBtn').onclick = async ()=>{
       if(confirm('Sign out? Your data stays saved on this device and in the cloud.')){
@@ -1279,7 +1366,64 @@ function openSettingsModal(){
   } else {
     document.getElementById('signInBtn').onclick = ()=>{ closeModal(); openAuthModal('signin'); };
     document.getElementById('signUpBtn').onclick = ()=>{ closeModal(); openAuthModal('signup'); };
+    document.getElementById('googleSignInBtn').onclick = async ()=>{
+      if(!fbReady){ showToast('Cloud sync unavailable right now'); return; }
+      try{
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await auth.signInWithRedirect(provider);
+      }catch(err){ showToast('Could not start Google sign-in'); }
+    };
   }
+}
+
+function openLedgersModal(){
+  openModal(`
+    ${backRow()}
+    <h3>${icon('book',18)} Ledgers</h3>
+    <div id="profileListManage">
+      ${state.profiles.map(p=>`
+        <div class="settings-row">
+          <div class="stext">${p.id===state.activeProfileId?'✓ ':''}${escapeHtml(p.name)}</div>
+          <div style="display:flex;gap:6px;">
+            ${p.id!==state.activeProfileId?`<button class="icon-btn" data-switch-profile="${p.id}" style="width:28px;height:28px;">${icon('book',14)}</button>`:''}
+            <button class="icon-btn" data-rename-profile="${p.id}" style="width:28px;height:28px;">${icon('edit',14)}</button>
+            ${state.profiles.length>1?`<button class="icon-btn" data-del-profile="${p.id}" style="width:28px;height:28px;">${icon('trash',14)}</button>`:''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <button class="settings-btn" id="addProfileBtn">${icon('plus',16)} Add new ledger</button>
+  `);
+  bindBack();
+  document.getElementById('addProfileBtn').onclick = ()=>{ closeModal(); openAddProfileModal(); };
+  document.querySelectorAll('[data-switch-profile]').forEach(btn=>{
+    btn.onclick = async ()=>{ closeModal(); await switchProfile(btn.dataset.switchProfile); showToast('Switched ledger'); };
+  });
+  document.querySelectorAll('[data-rename-profile]').forEach(btn=>{
+    btn.onclick = ()=>{ closeModal(); openRenameProfileModal(btn.dataset.renameProfile); };
+  });
+  document.querySelectorAll('[data-del-profile]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      if(!confirm('Delete this ledger and all its data? This cannot be undone.')) return;
+      await deleteProfile(btn.dataset.delProfile);
+      closeModal(); openLedgersModal();
+    };
+  });
+}
+
+function openCurrencyModal(){
+  openModal(`
+    ${backRow()}
+    <h3>${icon('cash',18)} Currency</h3>
+    <div id="currencyList">
+      ${CURRENCIES.map(c=>`
+        <div class="currency-option ${c.code===state.currency?'selected':''}" data-code="${c.code}">
+          <span class="sym">${c.symbol}</span><span class="cname">${c.name}</span><span class="check">✓</span>
+        </div>
+      `).join('')}
+    </div>
+  `);
+  bindBack();
   document.querySelectorAll('.currency-option').forEach(opt=>{
     opt.onclick = async ()=>{
       state.currency = opt.dataset.code;
@@ -1288,6 +1432,22 @@ function openSettingsModal(){
       showToast(`Currency set to ${state.currency}`);
     };
   });
+}
+
+function openAppearanceModal(){
+  openModal(`
+    ${backRow()}
+    <h3>${icon('moon',18)} Appearance &amp; Security</h3>
+    <div class="settings-row">
+      <div><div class="stext">${icon('moon',14)} Dark mode</div></div>
+      <div class="toggle ${state.theme==='dark'?'on':''}" id="darkToggle"><div class="knob"></div></div>
+    </div>
+    <div class="settings-row">
+      <div><div class="stext">${icon('lock',14)} PIN lock</div><div class="shint">Basic lock — not encryption-grade</div></div>
+      <div class="toggle ${state.pin?'on':''}" id="pinToggle"><div class="knob"></div></div>
+    </div>
+  `);
+  bindBack();
   document.getElementById('darkToggle').onclick = async ()=>{
     state.theme = state.theme==='dark' ? 'light' : 'dark';
     applyTheme();
@@ -1303,28 +1463,37 @@ function openSettingsModal(){
       closeModal(); openSetPinModal();
     }
   };
+}
+
+function openDataModal(){
+  openModal(`
+    ${backRow()}
+    <h3>${icon('download',18)} Backup &amp; Data</h3>
+    <button class="settings-btn" id="exportBtn">${icon('download',16)} Export backup (.json, all ledgers)</button>
+    <button class="settings-btn" id="importBtn">${icon('upload',16)} Import backup</button>
+    <button class="settings-btn" id="exportCsvBtn">${icon('download',16)} Export current ledger as CSV</button>
+    <div class="shint" style="padding:4px 2px 0 2px;">Data is stored on this device, and in the cloud if you're signed in. Export a backup before clearing browser data or switching phones.</div>
+  `);
+  bindBack();
   document.getElementById('exportBtn').onclick = exportBackup;
   document.getElementById('importBtn').onclick = ()=> document.getElementById('importFileInput').click();
   document.getElementById('exportCsvBtn').onclick = exportCSV;
-  document.getElementById('manageCategoriesBtn').onclick = ()=>{ closeModal(); openManageCategoriesModal(); };
-  document.getElementById('addProfileBtn').onclick = ()=>{ closeModal(); openAddProfileModal(); };
-  document.querySelectorAll('[data-switch-profile]').forEach(btn=>{
-    btn.onclick = async ()=>{ closeModal(); await switchProfile(btn.dataset.switchProfile); showToast('Switched ledger'); };
-  });
-  document.querySelectorAll('[data-rename-profile]').forEach(btn=>{
-    btn.onclick = ()=>{ closeModal(); openRenameProfileModal(btn.dataset.renameProfile); };
-  });
-  document.querySelectorAll('[data-del-profile]').forEach(btn=>{
-    btn.onclick = async ()=>{
-      if(!confirm('Delete this ledger and all its data? This cannot be undone.')) return;
-      await deleteProfile(btn.dataset.delProfile);
-      closeModal(); openSettingsModal();
-    };
-  });
+}
+
+function openAboutModal(){
+  openModal(`
+    ${backRow()}
+    <h3>${icon('info',18)} About</h3>
+    <a class="settings-btn" href="privacy-policy.html" target="_blank" rel="noopener" style="text-decoration:none;">${icon('info',16)} Privacy Policy</a>
+    <a class="settings-btn" href="terms-of-service.html" target="_blank" rel="noopener" style="text-decoration:none;">${icon('info',16)} Terms of Service</a>
+    <div class="shint" style="padding:8px 2px 0 2px;">Hisaab v1.1</div>
+  `);
+  bindBack();
 }
 
 function openManageCategoriesModal(){
   openModal(`
+    ${backRow()}
     <h3>${icon('sliders',18)} Categories</h3>
     <div id="catListManage">
       ${state.categories.map(c=>`
@@ -1333,9 +1502,8 @@ function openManageCategoriesModal(){
     </div>
     <div class="field" style="margin-top:12px;"><label>Add category</label><input type="text" id="newCatInput" placeholder="e.g. Fuel"></div>
     <div class="modal-btns"><button class="btn-primary" id="addCatBtn" style="flex:1;">Add category</button></div>
-    <div class="modal-btns"><button class="btn-secondary" id="closeCatBtn" style="flex:1;">Done</button></div>
   `);
-  document.getElementById('closeCatBtn').onclick = closeModal;
+  bindBack();
   document.getElementById('addCatBtn').onclick = async ()=>{
     const val = document.getElementById('newCatInput').value.trim();
     if(!val) return;
@@ -1439,9 +1607,22 @@ function openAuthModal(mode){
     <div style="text-align:center;margin-top:16px;font-size:13px;color:var(--ink-soft);font-weight:600;">
       ${mode==='signup' ? 'Already have an account? <a href="#" id="switchAuthMode" style="color:var(--brass);font-weight:800;">Sign in</a>' : 'New here? <a href="#" id="switchAuthMode" style="color:var(--brass);font-weight:800;">Create an account</a>'}
     </div>
+    ${mode==='signin' ? `<div style="text-align:center;margin-top:8px;"><a href="#" id="forgotPasswordLink" style="color:var(--ink-soft);font-size:12.5px;font-weight:700;text-decoration:underline;">Forgot password?</a></div>` : ''}
   `);
   document.getElementById('cancelBtn').onclick = closeModal;
   document.getElementById('switchAuthMode').onclick = (e)=>{ e.preventDefault(); closeModal(); openAuthModal(mode==='signup'?'signin':'signup'); };
+  if(mode==='signin'){
+    document.getElementById('forgotPasswordLink').onclick = async (e)=>{
+      e.preventDefault();
+      const email = document.getElementById('authEmail').value.trim();
+      if(!email){ showToast('Enter your email above first'); return; }
+      if(!fbReady){ showToast('Cloud sync unavailable right now'); return; }
+      try{
+        await auth.sendPasswordResetEmail(email);
+        showToast('Password reset email sent — check your inbox');
+      }catch(err){ showToast(authErrorMessage(err)); }
+    };
+  }
   document.getElementById('authBtn').onclick = async ()=>{
     const email = document.getElementById('authEmail').value.trim();
     const password = document.getElementById('authPassword').value;
@@ -1475,6 +1656,9 @@ if(fbReady){
     state.user = user ? {uid:user.uid, email:user.email} : null;
     while(state.loading){ await new Promise(r=>setTimeout(r,100)); }
     if(user){ await loadFromCloud(); } else { render(); }
+  });
+  auth.getRedirectResult().catch((err)=>{
+    if(err && err.code) showToast(authErrorMessage(err));
   });
 }
 
@@ -1609,6 +1793,23 @@ document.querySelectorAll('.tabbar button').forEach(btn=>{
     if(state.tab==='khata') state.activePartyId = null;
     render();
   });
+});
+
+window.addEventListener('popstate', ()=>{
+  if(document.getElementById('modalOverlay')){
+    closeModal();
+    return;
+  }
+  if(state.tab === 'khata-detail'){
+    state.tab = 'khata';
+    state.activePartyId = null;
+    render();
+    return;
+  }
+  if(state.tab !== 'home'){
+    state.tab = 'home';
+    render();
+  }
 });
 
 loadData();
