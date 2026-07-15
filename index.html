@@ -13,6 +13,9 @@
 <meta name="apple-mobile-web-app-title" content="Hisaab">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --paper: #F6F8FC;
@@ -271,7 +274,24 @@ function icon(name, size, cls){
   return `<svg class="icon${cls?(' '+cls):''}" width="${size||18}" height="${size||18}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name]||''}</svg>`;
 }
 
+const firebaseConfig = {
+  apiKey: "AIzaSyDxbge0pVxxsTaouc40nwzGx1Tq0wMC_IM",
+  authDomain: "bahi-khata-db588.firebaseapp.com",
+  projectId: "bahi-khata-db588",
+  storageBucket: "bahi-khata-db588.firebasestorage.app",
+  messagingSenderId: "446929839218",
+  appId: "1:446929839218:web:bfda4333330f048eed8eeb"
+};
+let auth = null, db = null, fbReady = false;
+try{
+  firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db = firebase.firestore();
+  fbReady = true;
+}catch(e){ console.error('Firebase init failed', e); }
+
 let state = {
+  user: null,
   tab: 'home',
   currency: 'INR',
   theme: 'light',
@@ -438,6 +458,7 @@ async function loadData(){
 async function saveProfiles(){
   try{ await storage.set('profiles-store', JSON.stringify({profiles: state.profiles, activeProfileId: state.activeProfileId})); }
   catch(e){ showToast('Could not save — try again'); }
+  cloudSaveProfiles();
 }
 
 async function switchProfile(id){
@@ -471,14 +492,95 @@ function hideSplash(){
 async function saveKhata(){
   try{ await storage.set(khataKey(), JSON.stringify({parties: state.parties, entries: state.entries})); }
   catch(e){ showToast('Could not save — try again'); }
+  cloudSaveLedger();
 }
 async function saveExpenses(){
   try{ await storage.set(expensesKey(), JSON.stringify({expenses: state.expenses})); }
   catch(e){ showToast('Could not save — try again'); }
+  cloudSaveLedger();
 }
 async function saveSettings(){
   try{ await storage.set('settings-store', JSON.stringify({currency: state.currency, theme: state.theme, pin: state.pin, budgets: state.budgets, categories: state.categories})); }
   catch(e){ showToast('Could not save — try again'); }
+  cloudSaveSettings();
+}
+
+function stripPhotosFromEntries(entriesObj){
+  const clean = {};
+  for(const pid in entriesObj){
+    clean[pid] = (entriesObj[pid]||[]).map(e=>{ const copy = Object.assign({}, e); delete copy.photo; return copy; });
+  }
+  return clean;
+}
+function stripPhotosFromExpenses(list){
+  return (list||[]).map(e=>{ const copy = Object.assign({}, e); delete copy.photo; return copy; });
+}
+
+async function cloudSaveLedger(){
+  if(!fbReady || !state.user || !state.activeProfileId) return;
+  try{
+    await db.collection('users').doc(state.user.uid).collection('ledgers').doc(state.activeProfileId).set({
+      parties: state.parties,
+      entries: stripPhotosFromEntries(state.entries),
+      expenses: stripPhotosFromExpenses(state.expenses),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }catch(e){ /* offline or blocked — local copy is already saved */ }
+}
+async function cloudSaveProfiles(){
+  if(!fbReady || !state.user) return;
+  try{
+    await db.collection('users').doc(state.user.uid).set({
+      activeProfileId: state.activeProfileId,
+      profiles: state.profiles,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, {merge:true});
+  }catch(e){}
+}
+async function cloudSaveSettings(){
+  if(!fbReady || !state.user) return;
+  try{
+    await db.collection('users').doc(state.user.uid).collection('meta').doc('settings').set({
+      currency: state.currency, theme: state.theme, budgets: state.budgets, categories: state.categories
+    });
+  }catch(e){}
+}
+
+async function loadFromCloud(){
+  if(!fbReady || !state.user) return;
+  try{
+    const userDoc = await db.collection('users').doc(state.user.uid).get();
+    if(userDoc.exists && userDoc.data().profiles && userDoc.data().profiles.length){
+      const data = userDoc.data();
+      state.profiles = data.profiles;
+      state.activeProfileId = data.activeProfileId || data.profiles[0].id;
+    } else {
+      await cloudSaveProfiles();
+    }
+    const settingsDoc = await db.collection('users').doc(state.user.uid).collection('meta').doc('settings').get();
+    if(settingsDoc.exists){
+      const s = settingsDoc.data();
+      if(s.currency) state.currency = s.currency;
+      if(s.theme) state.theme = s.theme;
+      if(s.budgets) state.budgets = s.budgets;
+      if(s.categories && s.categories.length) state.categories = s.categories;
+      applyTheme();
+    } else {
+      await cloudSaveSettings();
+    }
+    const ledgerDoc = await db.collection('users').doc(state.user.uid).collection('ledgers').doc(state.activeProfileId).get();
+    if(ledgerDoc.exists){
+      const l = ledgerDoc.data();
+      state.parties = l.parties||[];
+      state.entries = l.entries||{};
+      state.expenses = l.expenses||[];
+      await saveKhata(); await saveExpenses();
+    } else {
+      await cloudSaveLedger();
+    }
+    render();
+    showToast('Synced with your account');
+  }catch(e){ showToast('Could not reach the cloud — using data on this device'); }
 }
 
 function partyBalance(partyId){
@@ -1096,6 +1198,17 @@ function openSettingsModal(){
   openModal(`
     <h3>${icon('sliders',18)} Settings</h3>
     <div class="settings-section">
+      <div class="stitle">Account</div>
+      ${state.user ? `
+        <div class="settings-row"><div><div class="stext">${escapeHtml(state.user.email)}</div><div class="shint">Synced to the cloud</div></div></div>
+        <button class="settings-btn danger" id="signOutBtn">${icon('lock',16)} Sign out</button>
+      ` : `
+        <button class="settings-btn" id="signInBtn">${icon('lock',16)} Sign in</button>
+        <button class="settings-btn" id="signUpBtn">${icon('plus',16)} Create account</button>
+        <div class="shint" style="padding:4px 2px 0 2px;">Sign in to sync your ledgers across devices. Works fine without an account too — data just stays on this device.</div>
+      `}
+    </div>
+    <div class="settings-section">
       <div class="stitle">Ledgers</div>
       <div id="profileListManage">
         ${state.profiles.map(p=>`
@@ -1155,6 +1268,18 @@ function openSettingsModal(){
     <div class="modal-btns"><button class="btn-secondary" id="closeSettings" style="flex:1;">Close</button></div>
   `);
   document.getElementById('closeSettings').onclick = closeModal;
+  if(state.user){
+    document.getElementById('signOutBtn').onclick = async ()=>{
+      if(confirm('Sign out? Your data stays saved on this device and in the cloud.')){
+        await auth.signOut();
+        closeModal();
+        showToast('Signed out');
+      }
+    };
+  } else {
+    document.getElementById('signInBtn').onclick = ()=>{ closeModal(); openAuthModal('signin'); };
+    document.getElementById('signUpBtn').onclick = ()=>{ closeModal(); openAuthModal('signup'); };
+  }
   document.querySelectorAll('.currency-option').forEach(opt=>{
     opt.onclick = async ()=>{
       state.currency = opt.dataset.code;
@@ -1303,6 +1428,54 @@ function exportCSV(){
   URL.revokeObjectURL(url);
   closeModal();
   showToast('CSV exported');
+}
+
+function openAuthModal(mode){
+  openModal(`
+    <h3>${icon('lock',18)} ${mode==='signup'?'Create account':'Sign in'}</h3>
+    <div class="field"><label>Email</label><input type="email" id="authEmail" placeholder="you@example.com" autofocus></div>
+    <div class="field"><label>Password</label><input type="password" id="authPassword" placeholder="At least 6 characters"></div>
+    <div class="modal-btns"><button class="btn-secondary" id="cancelBtn">Cancel</button><button class="btn-primary" id="authBtn">${mode==='signup'?'Create account':'Sign in'}</button></div>
+    <div style="text-align:center;margin-top:16px;font-size:13px;color:var(--ink-soft);font-weight:600;">
+      ${mode==='signup' ? 'Already have an account? <a href="#" id="switchAuthMode" style="color:var(--brass);font-weight:800;">Sign in</a>' : 'New here? <a href="#" id="switchAuthMode" style="color:var(--brass);font-weight:800;">Create an account</a>'}
+    </div>
+  `);
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('switchAuthMode').onclick = (e)=>{ e.preventDefault(); closeModal(); openAuthModal(mode==='signup'?'signin':'signup'); };
+  document.getElementById('authBtn').onclick = async ()=>{
+    const email = document.getElementById('authEmail').value.trim();
+    const password = document.getElementById('authPassword').value;
+    if(!email || !password){ showToast('Enter email and password'); return; }
+    if(!fbReady){ showToast('Cloud sync unavailable right now'); return; }
+    try{
+      if(mode==='signup'){
+        await auth.createUserWithEmailAndPassword(email, password);
+      } else {
+        await auth.signInWithEmailAndPassword(email, password);
+      }
+      closeModal();
+      showToast(mode==='signup' ? 'Account created' : 'Signed in');
+    }catch(err){
+      showToast(authErrorMessage(err));
+    }
+  };
+}
+function authErrorMessage(err){
+  const code = (err && err.code) || '';
+  if(code.includes('email-already-in-use')) return 'That email is already registered — try signing in instead';
+  if(code.includes('wrong-password') || code.includes('invalid-credential')) return 'Incorrect email or password';
+  if(code.includes('user-not-found')) return 'No account with that email — try creating one';
+  if(code.includes('weak-password')) return 'Password should be at least 6 characters';
+  if(code.includes('invalid-email')) return 'Enter a valid email address';
+  return 'Something went wrong — try again';
+}
+
+if(fbReady){
+  auth.onAuthStateChanged(async (user)=>{
+    state.user = user ? {uid:user.uid, email:user.email} : null;
+    while(state.loading){ await new Promise(r=>setTimeout(r,100)); }
+    if(user){ await loadFromCloud(); } else { render(); }
+  });
 }
 
 function openSetPinModal(){
