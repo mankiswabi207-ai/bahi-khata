@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Balance — Hisaab</title>
+<link rel="icon" href="icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  body{ font-family:'Nunito',sans-serif; background:#F6F8FC; color:#222836; margin:0; padding:0; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  .card{ background:#fff; border-radius:20px; padding:32px 28px; max-width:340px; width:calc(100% - 32px); text-align:center; box-shadow:0 6px 24px rgba(31,41,55,0.08); }
+  .label{ font-size:12px; font-weight:800; color:#7A8299; text-transform:uppercase; letter-spacing:0.03em; }
+  h1{ font-size:20px; font-weight:800; margin:6px 0 20px 0; }
+  .balance{ font-size:32px; font-weight:800; margin:8px 0; }
+  .balance.get{ color:#16A34A; }
+  .balance.pay{ color:#E11D48; }
+  .tag{ font-size:13px; font-weight:700; color:#7A8299; }
+  .footer{ margin-top:24px; font-size:11.5px; color:#B0B6C4; font-weight:700; }
+  .error{ color:#7A8299; font-weight:700; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="label">Loading…</div>
+</div>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDxbge0pVxxsTaouc40nwzGx1Tq0wMC_IM",
+  authDomain: "bahi-khata-db588.firebaseapp.com",
+  projectId: "bahi-khata-db588",
+  storageBucket: "bahi-khata-db588.firebasestorage.app",
+  messagingSenderId: "446929839218",
+  appId: "1:446929839218:web:bfda4333330f048eed8eeb"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+const params = new URLSearchParams(location.search);
+const uid = params.get('u');
+const partyId = params.get('p');
+const card = document.getElementById('card');
+
+function fmt(n, currency){
+  return (currency==='INR'?'₹':currency+' ') + Number(n).toLocaleString('en-IN', {maximumFractionDigits:0});
+}
+
+async function load(){
+  if(!uid || !partyId){
+    card.innerHTML = '<div class="error">This link looks incomplete.</div>';
+    return;
+  }
+  try{
+    const doc = await db.collection('publicShares').doc(uid).collection('parties').doc(partyId).get();
+    if(!doc.exists){
+      card.innerHTML = '<div class="error">This balance link is no longer available.</div>';
+      return;
+    }
+    const d = doc.data();
+    const bal = d.balance || 0;
+    const cls = bal >= 0 ? 'get' : 'pay';
+    const tag = bal >= 0 ? "They'll get from you" : "They're owed to you";
+    card.innerHTML = `
+      <div class="label">Balance for</div>
+      <h1>${escapeHtml(d.partyName || '')}</h1>
+      <div class="tag">${tag}</div>
+      <div class="balance ${cls}">${fmt(Math.abs(bal), d.currency || 'INR')}</div>
+      <div class="footer">Shared via Hisaab</div>
+    `;
+  }catch(e){
+    card.innerHTML = '<div class="error">Could not load this balance right now.</div>';
+  }
+}
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+load();
+</script>
+</body>
+</html>
